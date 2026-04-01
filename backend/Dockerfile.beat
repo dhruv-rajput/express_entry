@@ -1,0 +1,39 @@
+# ── Stage 1: Build dependencies ──────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Stage 2: Final slim image ─────────────────────────────────────────────────
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+
+COPY . .
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Celery beat scheduler — no PORT needed, exactly 1 replica
+CMD ["celery", "-A", "workers.tasks.celery_app", "beat", "--loglevel=info", "--scheduler", "celery.beat:PersistentScheduler"]
