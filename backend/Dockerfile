@@ -45,5 +45,18 @@ USER appuser
 
 EXPOSE 8000
 
-# Railway injects $PORT — must use it
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# SERVICE_TYPE controls what process runs:
+#   api          → FastAPI server (default)
+#   worker       → Celery worker
+#   beat         → Celery beat scheduler
+ENV SERVICE_TYPE=api
+
+CMD ["sh", "-c", "\
+  if [ \"$SERVICE_TYPE\" = \"worker\" ]; then \
+    exec celery -A workers.tasks.celery_app worker --loglevel=info --concurrency=2 -Q celery; \
+  elif [ \"$SERVICE_TYPE\" = \"beat\" ]; then \
+    exec celery -A workers.tasks.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler; \
+  else \
+    exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}; \
+  fi \
+"]
