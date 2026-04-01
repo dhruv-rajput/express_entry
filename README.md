@@ -249,3 +249,4 @@ Install `browser_extension/` in Chrome Developer mode to auto-fill your IRCC pro
 This app is not affiliated with IRCC or the Government of Canada. It provides tools and information to help applicants, not legal immigration advice. For complex situations, always consult a licensed RCIC (Regulated Canadian Immigration Consultant).
 # Deployed via GitHub auto-deploy Tue Mar 31 06:56:50 IST 2026
 # Railway deployment test
+
