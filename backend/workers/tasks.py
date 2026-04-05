@@ -762,17 +762,40 @@ async def _monitor_draws_async():
 
 
 async def _scrape_ircc_draws() -> list[dict]:
-    """
-    Fetch Express Entry draw data.
-    Uses canadavisa.com which mirrors IRCC data in a scrapable HTML table.
-    Falls back to empty list if unavailable.
-    """
-    CANADAVISA_URL = "https://www.canadavisa.com/canada-immigration-discussion-board/threads/express-entry-rounds-of-invitations.1059/"
-
-    # Primary source: canadavisa tracker (static HTML table, reliable)
     try:
-        import time; t0 = time.perf_counter()
-        logger.info("_scrape_ircc_draws: fetching canadavisa draw tracker")
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(
+                "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.canada.ca/"},
+            )
+            response.raise_for_status()
+
+        draws = []
+        for r in response.json().get("rounds", []):
+            draw_number = str(r.get("drawNumber", "")).strip()
+            draw_date_str = r.get("drawDate", "").strip()
+            if not draw_number or not draw_date_str:
+                continue
+            min_crs = int(re.sub(r"\D", "", r.get("drawCRS", "0")) or "0")
+            if min_crs == 0:
+                continue
+            draws.append({
+                "number": draw_number,
+                "date": datetime.strptime(draw_date_str, "%Y-%m-%d"),
+                "type": _classify_draw_type(r.get("drawName", "")),
+                "invitations": int(re.sub(r"\D", "", r.get("drawSize", "0")) or "0"),
+                "min_crs": min_crs,
+            })
+
+        if draws:
+            logger.info(f"_scrape_ircc_draws: fetched {len(draws)} draws from IRCC")
+            return draws
+
+    except Exception as e:
+        logger.warning(f"_scrape_ircc_draws: IRCC fetch failed ({type(e).__name__}: {e})")
+
+    # Secondary: canadavisa HTML table
+    try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(
                 "https://www.canadavisa.com/express-entry-rounds-of-invitations.html",
@@ -780,16 +803,10 @@ async def _scrape_ircc_draws() -> list[dict]:
             )
             response.raise_for_status()
 
-        logger.info(f"_scrape_ircc_draws: fetched {len(response.text)} chars in {(time.perf_counter()-t0)*1000:.0f}ms")
         soup = BeautifulSoup(response.text, "html.parser")
         draws = []
-
-        tables = soup.find_all("table")
-        logger.info(f"_scrape_ircc_draws: found {len(tables)} tables")
-
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows[1:]:
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr")[1:]:
                 cells = row.find_all(["td", "th"])
                 if len(cells) < 4:
                     continue
@@ -797,16 +814,12 @@ async def _scrape_ircc_draws() -> list[dict]:
                     draw_number_raw = re.sub(r"\D", "", cells[0].get_text(strip=True))
                     if not draw_number_raw:
                         continue
-
                     draw_date_str = cells[1].get_text(strip=True)
                     draw_type_raw = cells[2].get_text(strip=True)
                     invitations = int(re.sub(r"\D", "", cells[3].get_text(strip=True)) or "0")
                     min_crs = int(re.sub(r"\D", "", cells[4].get_text(strip=True)) or "0") if len(cells) > 4 else 0
-
                     if min_crs == 0:
                         continue
-
-                    # Try multiple date formats
                     draw_date = None
                     for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%d %B %Y", "%d-%b-%Y"):
                         try:
@@ -814,11 +827,8 @@ async def _scrape_ircc_draws() -> list[dict]:
                             break
                         except ValueError:
                             continue
-
                     if not draw_date:
-                        logger.debug(f"_scrape_ircc_draws: unparseable date '{draw_date_str}'")
                         continue
-
                     draws.append({
                         "number": draw_number_raw,
                         "date": draw_date,
@@ -831,13 +841,11 @@ async def _scrape_ircc_draws() -> list[dict]:
                     continue
 
         if draws:
-            logger.info(f"_scrape_ircc_draws: parsed {len(draws)} draws")
+            logger.info(f"_scrape_ircc_draws: canadavisa fallback parsed {len(draws)} draws")
             return draws
 
-        logger.warning("_scrape_ircc_draws: no draws parsed from canadavisa — falling back to hardcoded data")
-
     except Exception as e:
-        logger.warning(f"_scrape_ircc_draws: canadavisa fetch failed ({type(e).__name__}: {e}) — using hardcoded fallback")
+        logger.warning(f"_scrape_ircc_draws: canadavisa fetch failed ({type(e).__name__}: {e})")
 
     # Fallback: hardcoded recent draws so the app always has data
     logger.info("_scrape_ircc_draws: using hardcoded fallback draw data")
