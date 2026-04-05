@@ -695,7 +695,7 @@ async def _monitor_draws_async():
     logger.info(f"monitor_draws: scraped {len(draw_data)} draws from IRCC")
 
     async with _make_session()() as db:
-        for draw in draw_data[:3]:  # Process latest 3 draws
+        for draw in draw_data[:20]:  # Process latest 20 draws
             # Check if already stored
             existing = await db.execute(
                 select(DrawDB).where(DrawDB.draw_number == draw["number"])
